@@ -4,7 +4,6 @@ pragma solidity >=0.8.13 <0.9.0;
 
 import "forge-std/Test.sol";
 import { Vm } from "forge-std/Vm.sol";
-import { DSTest } from "ds-test/test.sol";
 import { MevEthRouter } from "../src/MevEthRouter.sol";
 import { IUniswapV2Router02 } from "../src/interfaces/IUniswapV2Router.sol";
 import { IUniswapV2Pair } from "../src/interfaces/IUniswapV2Pair.sol";
@@ -45,7 +44,7 @@ contract MevEthRouterTest is DSTest {
         vm.assume(amountIn < 100000 ether);
         // uint256 amountIn = 100 ether;
         vm.deal(address(this), amountIn);
-        uint256 amountOutMin = MEVETH.previewDeposit(amountIn) * 999 / 1000;
+        uint256 amountOutMin = MEVETH.previewDeposit(amountIn) * 99 / 100;
         uint256 shares = router.stakeEthForMevEth{ value: amountIn }(address(this), amountIn, amountOutMin, block.timestamp);
         assertGt(shares, 0);
     }

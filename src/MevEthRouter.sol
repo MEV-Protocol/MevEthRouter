@@ -8,6 +8,7 @@ import "./interfaces/IGyro.sol";
 import "./interfaces/ICurveV2Pool.sol";
 import "./interfaces/IMevEth.sol";
 import "./interfaces/IRateProvider.sol";
+import "./interfaces/IQuoterV2.sol";
 import "./interfaces/IGyroECLPMath.sol";
 import "./interfaces/IUniswapV3SwapCallback.sol";
 import "./libraries/MevEthLibrary.sol";
@@ -43,6 +44,8 @@ contract MevEthRouter is IUniswapV3SwapCallback {
     IVault internal constant BAL = IVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
     /// @dev Gyro ECLP Math lib
     IGyroECLPMath internal constant gyroMath = IGyroECLPMath(0xF89A1713998593A441cdA571780F0900Dbef20f9);
+    /// @dev IQuoterV2 Uniswap swap quoter
+    IQuoterV2 internal constant quoter = IQuoterV2(0x61fFE014bA17989E743c5F6cB21bF9697530B21e);
     /// @dev Sushiswap factory address
     address internal constant SUSHI_FACTORY = 0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac;
     /// @dev UniswapV2 factory address
@@ -68,6 +71,8 @@ contract MevEthRouter is IUniswapV3SwapCallback {
 
     IRateProvider internal rateProvider0 = IRateProvider(0xf518f2EbeA5df8Ca2B5E9C7996a2A25e8010014b);
     IRateProvider internal rateProvider1 = IRateProvider(address(0));
+
+    uint256[3] internal uniV3Caps = [0, 0, 15 ether];
 
     /// @notice struct for pool reserves
     /// @param reserveIn amount of reserves (or virtual reserves) in pool for tokenIn
@@ -211,9 +216,6 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         }
         // Balancer (i=5)
         {
-            // bytes32 poolId = IGyro(pools[5].pair).getPoolId();
-            // address vault = IGyro(pools[5].pair).getVault();
-            // (, uint256[] memory balances,) = BAL.getPoolTokens(poolId);
             uint256[] memory balances = _getAllBalances();
             (reserves[5].reserveIn, reserves[5].reserveOut) = isDeposit ? (balances[1], balances[0]) : (balances[0], balances[1]);
         }
@@ -248,37 +250,37 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         uint256[8] memory amountsOutSingleEth;
 
         // first 3 pools have fee of 0.3%
-        for (uint256 i; i < 3; i = _inc(i)) {
+        for (uint256 i; i < 2; i = _inc(i)) {
             if (reserves[i].reserveOut > amountOutMin) {
-                amountsOutSingleSwap[i] = MevEthLibrary.getAmountOut(amountIn, reserves[i].reserveIn, reserves[i].reserveOut);
+                amountsOutSingleSwap[i] = amountOutCall(isDeposit, i, amountIn, reserves[i].reserveIn, reserves[i].reserveOut);
             }
             if (reserves[i].reserveOut > MIN_LIQUIDITY && reserves[i].reserveIn > MIN_LIQUIDITY && amountIn > MIN_LIQUIDITY) {
-                amountsOutSingleEth[i] = MevEthLibrary.getAmountOut(1 ether, reserves[i].reserveIn, reserves[i].reserveOut);
+                amountsOutSingleEth[i] = amountOutCall(isDeposit, i, 1 ether, reserves[i].reserveIn, reserves[i].reserveOut);
             }
         }
         // next 2 pools have variable rates
-        for (uint256 i = 3; i < 5; i = _inc(i)) {
+        for (uint256 i = 2; i < 5; i = _inc(i)) {
             if (reserves[i].reserveOut > amountOutMin && reserves[i].reserveIn > amountIn) {
-                amountsOutSingleSwap[i] = MevEthLibrary.getAmountOutFee(amountIn, reserves[i].reserveIn, reserves[i].reserveOut, MevEthLibrary.getFee(i));
+                amountsOutSingleSwap[i] = amountOutCall(isDeposit, i, amountIn, reserves[i].reserveIn, reserves[i].reserveOut);
             }
             if (reserves[i].reserveOut > MIN_LIQUIDITY && reserves[i].reserveIn > MIN_LIQUIDITY && amountIn > MIN_LIQUIDITY) {
-                amountsOutSingleEth[i] = MevEthLibrary.getAmountOutFee(1 ether, reserves[i].reserveIn, reserves[i].reserveOut, MevEthLibrary.getFee(i));
+                amountsOutSingleEth[i] = amountOutCall(isDeposit, i, 1 ether, reserves[i].reserveIn, reserves[i].reserveOut);
             }
         }
         // Balancer pool (todo: embed amount out calc)
         if (reserves[5].reserveOut > amountOutMin) {
-            amountsOutSingleSwap[5] = balancerAmountOut(isDeposit, amountIn, reserves[5].reserveIn, reserves[5].reserveOut);
+            amountsOutSingleSwap[5] = amountOutCall(isDeposit, 5, amountIn, reserves[5].reserveIn, reserves[5].reserveOut);
         }
         if (reserves[5].reserveOut > MIN_LIQUIDITY && amountIn > MIN_LIQUIDITY) {
-            amountsOutSingleEth[5] = balancerAmountOut(isDeposit, 1 ether, reserves[5].reserveIn, reserves[5].reserveOut);
+            amountsOutSingleEth[5] = amountOutCall(isDeposit, 5, 1 ether, reserves[5].reserveIn, reserves[5].reserveOut);
         }
 
         // Curve pool (todo: embed amount out calc)
         if (reserves[6].reserveOut > amountOutMin) {
-            amountsOutSingleSwap[6] = isDeposit ? ICurveV2Pool(curveV2Pool).get_dy(0, 1, amountIn) : ICurveV2Pool(curveV2Pool).get_dy(1, 0, amountIn);
+            amountsOutSingleSwap[6] = amountOutCall(isDeposit, 6, amountIn, reserves[6].reserveIn, reserves[6].reserveOut);
         }
         if (reserves[6].reserveOut > MIN_LIQUIDITY && amountIn > MIN_LIQUIDITY) {
-            amountsOutSingleEth[6] = isDeposit ? ICurveV2Pool(curveV2Pool).get_dy(0, 1, 1 ether) : ICurveV2Pool(curveV2Pool).get_dy(1, 0, 1 ether);
+            amountsOutSingleEth[6] = amountOutCall(isDeposit, 6, 1 ether, reserves[6].reserveIn, reserves[6].reserveOut);
         }
         // MevEth
         amountsOutSingleSwap[7] =
@@ -329,16 +331,6 @@ contract MevEthRouter is IUniswapV3SwapCallback {
     function balancerAmountOut(bool isDeposit, uint256 amountIn, uint256 reserveIn, uint256 reserveOut) internal view returns (uint256 amountOut) {
         uint256 scalingFactorTokenIn = _scalingFactor(!isDeposit);
         uint256 scalingFactorTokenOut = _scalingFactor(isDeposit);
-
-        // All token amounts are upscaled.
-        // uint256 balanceTokenIn = reserveIn * scalingFactorTokenIn / 1 ether;
-        // uint256 balanceTokenOut = reserveOut * scalingFactorTokenOut / 1 ether;
-
-        // uint256[] memory balances = new uint256[](2);
-        // balances[0] = isDeposit ? balanceTokenOut : balanceTokenIn;
-        // balances[1] = isDeposit ? balanceTokenIn : balanceTokenOut;
-        // uint256[] memory balances = _getAllBalances();
-
         uint256[] memory balances = new uint256[](2);
         balances[0] = isDeposit ? reserveOut : reserveIn;
         balances[1] = isDeposit ? reserveIn : reserveOut;
@@ -347,8 +339,6 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         amountIn = (amountIn - feeAmount) * scalingFactorTokenIn / 1 ether;
 
         (IGyroECLPMath.Params memory params, IGyroECLPMath.DerivedParams memory derived) = gyro.getECLPParams();
-        // bytes memory data =
-        // abi.encodeWithSignature("calculateInvariant(uint256[],(int256,int256,int256,int256,int256),((int256,int256),(int256,int256),int256,int256,int256,int256,int256))",balances,params,derived);
         // for some reason GyroECLPMath lib has a different selector
         bytes memory data = abi.encodeWithSelector(0x78ace857, balances, params, derived);
         (, bytes memory returnData) = address(gyroMath).staticcall(data);
@@ -364,23 +354,25 @@ contract MevEthRouter is IUniswapV3SwapCallback {
     }
 
     function amountOutCall(bool isDeposit, uint256 i, uint256 amountIn, uint256 reserveIn, uint256 reserveOut) internal returns (uint256 amountOut) {
-        if (i < 3) {
-            if (reserveOut > MIN_LIQUIDITY) {
+        if (i < 2) {
+            if (reserveOut > MIN_LIQUIDITY && amountIn < reserveOut) {
                 amountOut = MevEthLibrary.getAmountOut(amountIn, reserveIn, reserveOut);
             }
         } else if (i < 5) {
-            if (reserveOut > MIN_LIQUIDITY && reserveIn > MIN_LIQUIDITY) {
+            if (reserveOut > MIN_LIQUIDITY && reserveIn > MIN_LIQUIDITY && amountIn < reserveOut / 2 && amountIn < uniV3Caps[i-2]) {
                 amountOut = MevEthLibrary.getAmountOutFee(amountIn, reserveIn, reserveOut, MevEthLibrary.getFee(i));
             }
         }
         // Balancer pool
         if (i == 5) {
-            amountOut = balancerAmountOut(isDeposit, amountIn, reserveIn, reserveOut);
+            if (reserveOut > MIN_LIQUIDITY && amountIn < reserveOut / 2) {
+                amountOut = balancerAmountOut(isDeposit, amountIn, reserveIn, reserveOut);
+            }
         }
 
         // Curve pool (todo: embed amount out calc)
         if (i == 6) {
-            if (reserveOut > MIN_LIQUIDITY) {
+            if (reserveOut > MIN_LIQUIDITY && amountIn < reserveOut / 2) {
                 amountOut = isDeposit ? ICurveV2Pool(curveV2Pool).get_dy(0, 1, amountIn) : ICurveV2Pool(curveV2Pool).get_dy(1, 0, amountIn);
             }
         }
@@ -462,10 +454,6 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                 } else {
                     amountsIn[i] = amountsIn[i] - (amountsIn[i] * 2 * (targetAmountOut - amountsOut[i])) / targetAmountOut;
                 }
-                // amountsIn[i] = (amountsIn[i] * amountsOut[i]) / targetAmountOut;
-                // unchecked {
-                //     amountsIn[i] = (amountsIn[i] * amountsOut[i]**3) / targetAmountOut**3;
-                // }
             }
 
             // Normalize amounts to maintain the total sum
@@ -509,6 +497,8 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                 ++numPools;
             }
         }
+        console.log("Pools");
+        console.log(numPools);
 
         if (numPools < 2) {
             amountsIn[index[7]] = amountIn; // set best price as default, before splitting
@@ -538,10 +528,16 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                     reserves[index2[i]].reserveIn,
                     reserves[index2[i]].reserveOut
                 );
-                cumulativeAmount = cumulativeAmount + amountsIn[index2[i]];
-                if (i == 8 - numPools && cumulativeAmount < amountIn) {
-                    amountsIn[index2[i]] = amountsIn[index2[i]] + amountIn - cumulativeAmount;
+                // UniV3 adjustment
+                if (index2[i] < 5 && index2[i] > 1 && amountsIn[index2[i]] > 5 * MIN_LIQUIDITY){
+                    amountsOut[index2[i]] = _swapUniV3Call(!isDeposit, uint24(MevEthLibrary.getFee(index2[i])), address(MEVETH), address(WETH09), amountsIn[index2[i]]);
                 }
+                
+                console.log("Amounts");
+                console.logUint(amountsIn[index2[i]]);
+                console.logUint(amountsOut[index2[i]]);
+                cumulativeAmount = cumulativeAmount + amountsIn[index2[i]];
+                if (cumulativeAmount == amountIn) break;
             }
         }
     }
@@ -558,27 +554,35 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         internal
         returns (uint256 amountInToSync, uint256 amountOut)
     {
+        // todo: make more efficient
         uint256 amount;
         uint256 chunk = amountIn / 10;
         uint256 precision = 0.1 ether;
         if (chunk < precision) {
             chunk = precision;
         }
+        console.logUint(index);
         for (uint256 i; i < 10; i = _inc(i)) {
             amount = amount + chunk;
-            if (amount > amountIn - cumulativeAmount) {
-                amountInToSync = amountIn - cumulativeAmount;
-                if (amountInToSync > 0) {
-                    amountOut = amountOutCall(isDeposit, index, amountInToSync, reserveIn, reserveOut);
-                } else {
-                    amountOut = 0;
-                }
+            bool endLoop;
+            if (index > 1 && index < 5 && amount > uniV3Caps[index-2]) {
+                amount = uniV3Caps[index-2];
+                endLoop = true;
+                // hard cap univ3 amounts as they become more unpredictable
+            }
+            if (amount + precision > amountIn - cumulativeAmount) {
+                amount = amountIn - cumulativeAmount;
+                endLoop = true;
+            }
+            if (amount == 0) {
+                amountOut = 0;
                 return (amountInToSync, amountOut);
             }
+            console.logUint(amount);
             amountOut = amountOutCall(isDeposit, index, amount, reserveIn, reserveOut);
-            uint256 factor = amount / 1 ether;
-            if (amountOut / amountsOutSingleEthTarget < factor) break;
+            if (amountOut * 1 ether / amountsOutSingleEthTarget < amount) break;
             amountInToSync = amount;
+            if (endLoop) return (amountInToSync, amountOut);
         }
         // refine
         if (chunk > precision) {
@@ -586,52 +590,23 @@ contract MevEthRouter is IUniswapV3SwapCallback {
             chunk = chunk / 10;
             for (uint256 i; i < 10; i = _inc(i)) {
                 amount = amount + chunk;
+                bool endLoop;
                 if (amount > amountIn - cumulativeAmount) {
-                    amountInToSync = amountIn - cumulativeAmount;
-                    amountOut = amountOutCall(isDeposit, index, amountInToSync, reserveIn, reserveOut);
-                    return (amountInToSync, amountOut);
+                    amount = amountIn - cumulativeAmount;
+                    endLoop = true;
                 }
 
                 amountOut = amountOutCall(isDeposit, index, amount, reserveIn, reserveOut);
-                uint256 factor = amount / 1 ether;
-                if (amountOut / amountsOutSingleEthTarget < factor) break;
+                if (amountOut * 1 ether / amountsOutSingleEthTarget < amount) break;
                 amountInToSync = amount;
+                if (endLoop) return (amountInToSync, amountOut);
             }
         }
 
         if (amountInToSync == 0) {
             amountOut = 0;
-            return (amountInToSync, amountOut);
         }
     }
-
-    // /// @notice Optimal Amounts out, from split swap, at current state, accounting for fees and slippage
-    // /// @param amountIn amount In
-    // /// @param path array of token addresses representing path of swap
-    // /// @return amounts array corresponding to path
-    // function getAmountsOut(uint256 amountIn, address[] calldata path)
-    //     external
-    //     view
-    //     virtual
-    //     returns (uint256[] memory amounts)
-    // {
-    //     MevEthLibrary.Swap[] memory swaps = MevEthLibrary.getSwapsOut(
-    //         SUSHI_FACTORY,
-    //         UNIV2_FACTORY,
-    //         amountIn,
-    //         SUSHI_FACTORY_HASH,
-    //         UNIV2_FACTORY_HASH,
-    //         path
-    //     );
-    //     uint256 length = swaps.length;
-    //     amounts = new uint256[](_inc(length));
-    //     for (uint256 i; i < length; i = _inc(i)) {
-    //         for (uint256 j; j < 5; j = _inc(j)) {
-    //             amounts[i] = amounts[i] + swaps.pools[j].amountIn;
-    //             if (i == _dec(length)) amounts[_inc(i)] = amounts[_inc(i)] + swaps.pools[j].amountOut;
-    //         }
-    //     }
-    // }
 
     /// @dev Callback for Uniswap V3 pool.
     /// @param amount0Delta amount of token0 (-ve indicates amountOut i.e. already transferred from v3 pool to here)
@@ -696,6 +671,28 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         (int256 amount0, int256 amount1) = IUniswapV3Pool(pair).swap(to, !isReverse, int256(amountIn), sqrtPriceLimitX96, data);
         amountOut = isReverse ? uint256(-(amount0)) : uint256(-(amount1));
         amountInActual = isReverse ? uint256(amount1) : uint256(amount0);
+    }
+
+    function _swapUniV3Call(
+        bool isReverse,
+        uint24 fee,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    )
+        internal
+        virtual
+        returns (uint256 amountOut)
+    {
+        uint160 sqrtPriceLimitX96 = isReverse ? MAX_SQRT_RATIO - 1 : MIN_SQRT_RATIO + 1;
+        IQuoterV2.QuoteExactInputSingleParams memory params = IQuoterV2.QuoteExactInputSingleParams({
+            tokenIn: tokenIn,
+            tokenOut: tokenOut,
+            amountIn: amountIn,
+            fee: fee,
+            sqrtPriceLimitX96: sqrtPriceLimitX96
+        });
+        (amountOut,,,) = quoter.quoteExactInputSingle(params);
     }
 
     /// @dev Internal core swap. Requires the initial amount to have already been sent to the first pair (for v2 pairs).
@@ -874,6 +871,11 @@ contract MevEthRouter is IUniswapV3SwapCallback {
     function changeCurvePool(address newCurvePool) external {
         if (msg.sender != gov) revert ExecuteNotAuthorized();
         curveV2Pool = newCurvePool;
+    }
+
+    function changeUniV3Caps(uint256[3] calldata caps) external {
+        if (msg.sender != gov) revert ExecuteNotAuthorized();
+        uniV3Caps = caps;
     }
 
     /// @notice Sweep dust tokens and eth to recipient
