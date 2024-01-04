@@ -66,10 +66,9 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     /// @dev Balancer pool id
     bytes32 internal poolId = 0xb3b675a9a3cb0df8f66caf08549371bfb76a9867000200000000000000000611;
     /// @dev Gyro pool
-    IGyro internal gyro = IGyro(0xb3b675a9A3CB0DF8F66Caf08549371BfB76A9867);
+    IGyro internal constant gyro = IGyro(0xb3b675a9A3CB0DF8F66Caf08549371BfB76A9867);
 
-    IRateProvider internal rateProvider0 = IRateProvider(0xf518f2EbeA5df8Ca2B5E9C7996a2A25e8010014b);
-    IRateProvider internal rateProvider1 = IRateProvider(address(0));
+    IRateProvider internal constant rateProvider0 = IRateProvider(0xf518f2EbeA5df8Ca2B5E9C7996a2A25e8010014b);
 
     uint256[3] internal uniV3Caps = [0, 0, 15 ether];
 
@@ -548,93 +547,6 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     }
 
     /// @notice assigns optimal route for maximum amount out, given pool reserves
-    function _splitSwapOutRough(
-        bool isDeposit,
-        uint256 amountIn,
-        uint256[8] memory amountsOutSingleSwap,
-        uint256[8] memory amountsOutSingleEth,
-        Reserve[8] memory reserves
-    )
-        internal
-        returns (uint256[8] memory amountsIn, uint256[8] memory amountsOut)
-    {
-        uint256[8] memory index = MevEthLibrary._sortArray(amountsOutSingleSwap); // sorts in ascending order (i.e. best price is last)
-        // First check best single swap price and return if no split is needed
-        if (_isNonZero(amountsOutSingleSwap[index[7]]) && amountIn <= MIN_LIQUIDITY) {
-            amountsIn[index[7]] = amountIn; // set best price as default, before splitting
-            amountsOut[index[7]] = amountsOutSingleSwap[index[7]];
-            return (amountsIn, amountsOut);
-        }
-
-        // check split estimate
-        uint256 numPools;
-        for (uint256 i; i < 8; i = _inc(i)) {
-            if (_isZero(amountsOutSingleEth[i])) continue;
-            unchecked {
-                ++numPools;
-            }
-        }
-
-        if (numPools < 2) {
-            amountsIn[index[7]] = amountIn; // set best price as default, before splitting
-            amountsOut[index[7]] = amountsOutSingleSwap[index[7]];
-            return (amountsIn, amountsOut);
-        }
-        // optimistically initialise with equal amounts in
-        for (uint256 i; i < 8; i = _inc(i)) {
-            if (_isZero(amountsOutSingleEth[i])) continue;
-            amountsIn[i] = amountIn / numPools;
-            amountsOut[i] = amountOutCall(isDeposit, i, amountsIn[i], reserves[i].reserveIn, reserves[i].reserveOut);
-            if (amountsOut[i] == 0) {
-                amountsIn[i] = 0;
-                amountsOutSingleEth[i] = 0;
-                --numPools;
-                if (numPools < 2) {
-                    delete amountsIn;
-                    delete amountsOut;
-                    amountsIn[index[7]] = amountIn; // set best price as default, before splitting
-                    amountsOut[index[7]] = amountsOutSingleSwap[index[7]];
-                    return (amountsIn, amountsOut);
-                }
-            }
-        }
-
-        // Converge on optimal split
-        for (uint256 iteration = 0; iteration < 10; iteration = _inc(iteration)) {
-            uint256 totalAmountOut = 0;
-
-            // Calculate total output for the current split
-            for (uint256 i = 0; i < 8; i = _inc(i)) {
-                totalAmountOut += amountsOut[i];
-            }
-
-            // Adjust amounts based on the difference between target and actual output
-            for (uint256 i = 0; i < 8; i++) {
-                if (amountsIn[i] == 0) continue;
-                uint256 targetAmountOut = (amountsIn[i] * totalAmountOut) / amountIn;
-                if (amountsOut[i] > targetAmountOut) {
-                    // performing better so assign more amount in
-                    amountsIn[i] = amountsIn[i] + (amountsIn[i] * 2 * (amountsOut[i] - targetAmountOut)) / targetAmountOut;
-                } else {
-                    amountsIn[i] = amountsIn[i] - (amountsIn[i] * 2 * (targetAmountOut - amountsOut[i])) / targetAmountOut;
-                }
-            }
-
-            // Normalize amounts to maintain the total sum
-            uint256 currentTotalAmountIn = 0;
-            for (uint256 i = 0; i < 8; i++) {
-                if (amountsIn[i] == 0) continue;
-                currentTotalAmountIn += amountsIn[i];
-            }
-            for (uint256 i = 0; i < 8; i++) {
-                if (amountsIn[i] == 0) continue;
-                amountsIn[i] = (amountsIn[i] * amountIn) / currentTotalAmountIn;
-                amountsOut[i] = amountOutCall(isDeposit, i, amountsIn[i], reserves[i].reserveIn, reserves[i].reserveOut);
-            }
-        }
-    }
-
-    /// @notice assigns optimal route for maximum amount out, given pool reserves
     function _splitSwapOut(
         bool isDeposit,
         uint256 amountIn,
@@ -1044,6 +956,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
 
     function changeGov(address newGov) external {
         if (msg.sender != gov) revert ExecuteNotAuthorized();
+        if (newGov == address(0)) revert ZeroAddress();
         gov = newGov;
     }
 
@@ -1054,6 +967,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
 
     function changeCurvePool(address newCurvePool) external {
         if (msg.sender != gov) revert ExecuteNotAuthorized();
+        if (newCurvePool == address(0)) revert ZeroAddress();
         curveV2Pool = newCurvePool;
     }
 

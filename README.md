@@ -35,6 +35,13 @@ Fuzz test all methods on `MevEthRouter` produce better results than Deposit / Re
 forge test -vvv
 ```
 
+## Slither audit
+
+```bash
+poetry install
+
+poetry run slither .
+```
 
 ## Test deploy
 Ethereum mainnet:
@@ -57,6 +64,7 @@ Fill in `PRIVATE_KEY` and `ETHERSCAN_KEY` in `.env`.
 - [x] Testing
 - [x] Deployment scripts
 - [x] Redeem route with queue toggle and slippage tolerance
+- [x] Slither self audit workflow
 - [ ] Documentation of derived math and code
 - [ ] Gas optimization
   - [x] Abstract route finder for off-chain call

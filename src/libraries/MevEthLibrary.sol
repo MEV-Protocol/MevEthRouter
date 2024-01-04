@@ -4,7 +4,6 @@ pragma solidity ^0.8.13;
 import "../interfaces/IUniswapV3Pool.sol";
 import "../interfaces/IUniswapV2Pair.sol";
 import "../interfaces/IUniswapV2Factory.sol";
-import "./Babylonian.sol";
 
 /// @title MevEthLibrary
 /// @author Manifold FInance
@@ -79,17 +78,6 @@ library MevEthLibrary {
         if (isZeroAddress) revert ZeroAddress();
     }
 
-    /// @notice Calculates the CREATE2 address for a pair without making any external calls
-    /// @dev Factory passed in directly because we have multiple factories. Format changes for new solidity spec.
-    /// @param factory Factory address for dex
-    /// @param tokenA Pool token
-    /// @param tokenB Pool token
-    /// @return pair Pair pool address
-    function pairFor(address factory, address tokenA, address tokenB, bytes32 factoryHash) internal pure returns (address pair) {
-        (address token0, address token1) = sortTokens(tokenA, tokenB);
-        pair = _asmPairFor(factory, token0, token1, factoryHash);
-    }
-
     /// @custom:assembly Calculates the CREATE2 address for a pair without making any external calls from pre-sorted tokens
     /// @notice Calculates the CREATE2 address for a pair without making any external calls from pre-sorted tokens
     /// @dev Factory passed in directly because we have multiple factories. Format changes for new solidity spec.
@@ -119,18 +107,6 @@ library MevEthLibrary {
             mstore(add(ptr, 0x35), factoryHash) // factory init code hash
             pair := keccak256(ptr, 0x55)
         }
-    }
-
-    /// @notice Fetches and sorts the reserves for a pair
-    /// @param factory Factory address for dex
-    /// @param tokenA Pool token
-    /// @param tokenB Pool token
-    /// @return reserveA Reserves for tokenA
-    /// @return reserveB Reserves for tokenB
-    function getReserves(address factory, address tokenA, address tokenB, bytes32 factoryHash) internal view returns (uint256 reserveA, uint256 reserveB) {
-        (address token0, address token1) = sortTokens(tokenA, tokenB);
-        (uint256 reserve0, uint256 reserve1,) = IUniswapV2Pair(_asmPairFor(factory, token0, token1, factoryHash)).getReserves();
-        (reserveA, reserveB) = tokenA == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
     }
 
     /// @notice Given an input asset amount, returns the maximum output amount of the other asset (accounting for fees) given reserves
@@ -213,19 +189,6 @@ library MevEthLibrary {
         }
     }
 
-    /// @dev returns amount In of pool 1 required to sync prices with pool 2
-    /// @param x1 reserveIn pool 1
-    /// @param y1 reserveOut pool 1
-    /// @param x2 reserveIn pool 2
-    /// @param y2 reserveOut pool 2
-    /// @param fee pool 1 fee
-    function _amountToSyncPricesFee(uint256 x1, uint256 y1, uint256 x2, uint256 y2, uint256 fee) internal pure returns (uint256) {
-        unchecked {
-            return (x1 * (Babylonian.sqrt((fee * fee + (x2 * y1 * (4_000_000_000_000 - 4_000_000 * fee)) / (x1 * y2))) - (2_000_000 - fee)))
-                / (2 * (1_000_000 - fee));
-        }
-    }
-
     /// @custom:gas Uint256 zero check gas saver
     /// @dev Uint256 zero check gas saver
     /// @param value Number to check
@@ -241,15 +204,6 @@ library MevEthLibrary {
     function _isNonZero(uint256 value) internal pure returns (bool boolValue) {
         assembly ("memory-safe") {
             boolValue := iszero(iszero(value))
-        }
-    }
-
-    /// @custom:gas Unchecked increment gas saver
-    /// @dev Unchecked increment gas saver for loops
-    /// @param i Number to increment
-    function _inc(uint256 i) internal pure returns (uint256) {
-        unchecked {
-            return i + 1;
         }
     }
 
