@@ -1,0 +1,15 @@
+{
+    "detectors_to_exclude": "calls-loop,unused-return,too-many-digits,similar-names,cyclomatic-complexity,low-level-calls,assembly,uninitialized-local,incorrect-equality,arbitrary-send-eth,block-timestamp,solc-version,naming-convention,reentrancy-events",
+    "exclude_informational": false,
+    "exclude_low": false,
+    "exclude_medium": false,
+    "exclude_high": false,
+    "disable_color": false,
+    "filter_paths": "(lib/|mocks/|test/)",
+    "legacy_ast": false,
+    "solc_remaps": [
+        "ds-test/=lib/ds-test/src/",
+        "forge-std/=lib/forge-std/src/",
+        "solmate/=lib/solmate/src/"
+    ]
+}

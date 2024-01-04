@@ -1,10 +1,13 @@
-on: [push]
+on:
+  push:
+    paths:
+    - 'src/**/*.sol'
 
 env:
   FOUNDRY_PROFILE: ci
   RPC_MAINNET: ${{ secrets.RPC_MAINNET }}
 
-name: test
+name: Foundry test
 
 jobs:
   check:
