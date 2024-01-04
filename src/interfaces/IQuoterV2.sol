@@ -40,16 +40,10 @@ interface IQuoterV2 {
     /// amountIn The desired input amount
     /// sqrtPriceLimitX96 The price limit of the pool that cannot be exceeded by the swap
     /// @return amountOut The amount of `tokenOut` that would be received
-    /// @return sqrtPriceX96After The sqrt price of the pool after the swap
-    /// @return initializedTicksCrossed The number of initialized ticks that the swap crossed
-    /// @return gasEstimate The estimate of the gas that the swap consumes
     function quoteExactInputSingle(QuoteExactInputSingleParams memory params)
         external
         returns (
-            uint256 amountOut,
-            uint160 sqrtPriceX96After,
-            uint32 initializedTicksCrossed,
-            uint256 gasEstimate
+            uint256 amountOut
         );
 
     /// @notice Returns the amount in required for a given exact output swap without executing the swap

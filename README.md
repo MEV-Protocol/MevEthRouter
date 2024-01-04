@@ -1,4 +1,4 @@
-# mevETH Router ![Foundry](https://github.com/manifoldfinance/MevEthRouter/actions/workflows/forge.yml/badge.svg)
+# mevETH Router ![Foundry](https://github.com/manifoldfinance/MevEthRouter/actions/workflows/forge.yaml/badge.svg)
 
 ### Optimal route for mevETH Deposit / Swap / Withdraw
 
@@ -56,7 +56,7 @@ Fill in `PRIVATE_KEY` and `ETHERSCAN_KEY` in `.env`.
 - [x] Split swaps between Sushiswap, Uniswap V2 and Uniswap V3, Balancer, Curve, MevEth funcs
 - [x] Testing
 - [x] Deployment scripts
-- [ ] Redeem route with queue toggle and slippage tolerance
+- [x] Redeem route with queue toggle and slippage tolerance
 - [ ] Documentation of derived math and code
 - [ ] Gas optimization
 

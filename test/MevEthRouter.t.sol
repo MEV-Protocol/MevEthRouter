@@ -48,4 +48,18 @@ contract MevEthRouterTest is DSTest {
         uint256 shares = router.stakeEthForMevEth{ value: amountIn }(address(this), amountIn, amountOutMin, block.timestamp);
         assertGt(shares, 0);
     }
+
+    function testRedeemEth(uint80 amountIn) external {
+        vm.assume(amountIn > 2 ether);
+        vm.assume(amountIn < 10000 ether);
+        // uint256 amountIn = 100 ether;
+        vm.deal(address(this), amountIn);
+        uint256 shares = router.stakeEthForMevEth{ value: amountIn }(address(this), amountIn, 1, block.timestamp);
+        uint256 amountOutMin = 1;
+        ERC20(address(MEVETH)).approve(address(router), shares);
+        uint256 assets = router.redeemMevEthForEth(false, address(this), shares / 2, amountOutMin, block.timestamp);
+        assertGt(assets, 0);
+        assets = router.redeemMevEthForEth(true, address(this), shares / 2, amountOutMin, block.timestamp);
+        assertGt(assets, 0);
+    }
 }
