@@ -40,36 +40,54 @@ contract MevEthRouterTest is DSTest {
 
     receive() external payable { }
 
+    /// @notice Fuzz test staking Eth with static call for route
+    /// @dev default client side staking eth process, using static call on route finder to save gas
     function testStakeEthRaw(uint80 amountIn) external {
         vm.assume(amountIn > 0.1 ether);
         vm.assume(amountIn < 100_000 ether);
         // uint256 amountIn = 100 ether;
         vm.deal(address(this), amountIn);
         uint256 amountOutMin = MEVETH.previewDeposit(amountIn) * 99 / 100;
-        IMevEthRouter.Swap memory swaps = router.getStakeRoute(amountIn, amountOutMin);
+        // test static call for route to save gas at client side
+        bytes memory input = abi.encodeWithSelector(router.getStakeRoute.selector, amountIn, amountOutMin);
+        (, bytes memory data) = address(router).staticcall(input);
+        (IMevEthRouter.Swap memory swaps) = abi.decode(data, (IMevEthRouter.Swap));
+        // IMevEthRouter.Swap memory swaps = router.getStakeRoute(amountIn, amountOutMin);
         uint256 shares = router.stakeEthForMevEthRaw{ value: amountIn }(address(this), amountIn, amountOutMin, block.timestamp, swaps);
         assertGt(shares, 0);
     }
 
+    /// @notice Fuzz test redeeming MevEth with static call for route
+    /// @dev default client side redeem meveth process, using static call on route finder to save gas
     function testRedeemEthRaw(uint80 amountIn) external {
         vm.assume(amountIn > 2 ether);
         vm.assume(amountIn < 10_000 ether);
         // uint256 amountIn = 100 ether;
         vm.deal(address(this), amountIn);
         uint256 shares = router.stakeEthForMevEth{ value: amountIn }(address(this), amountIn, 1, block.timestamp);
-        uint256 amountOutMin = 1;
+        uint256 amountOutMin = 1; // fuzz for first test can give high slippage
         ERC20(address(MEVETH)).approve(address(router), shares);
-        IMevEthRouter.Swap memory swaps = router.getRedeemRoute(false, shares / 2, amountOutMin);
+        // test static call for route to save gas at client side
+        bytes memory input = abi.encodeWithSelector(router.getRedeemRoute.selector, false, shares / 2, amountOutMin);
+        (, bytes memory data) = address(router).staticcall(input);
+        (IMevEthRouter.Swap memory swaps) = abi.decode(data, (IMevEthRouter.Swap));
+        // IMevEthRouter.Swap memory swaps = router.getRedeemRoute(false, shares / 2, amountOutMin);
+        // Test half shares with no queue and any slippage (since fuzz will create high orders)
         uint256 assets = router.redeemMevEthForEthRaw(false, address(this), shares / 2, amountOutMin, block.timestamp, swaps);
         assertGt(assets, 0);
-        swaps = router.getRedeemRoute(true, shares / 2, amountOutMin);
+        // swaps = router.getRedeemRoute(true, shares / 2, amountOutMin);
+        input = abi.encodeWithSelector(router.getRedeemRoute.selector, true, shares / 2, amountOutMin);
+        (, data) = address(router).staticcall(input);
+        (swaps) = abi.decode(data, (IMevEthRouter.Swap));
+        // Test other half shares with queue
         assets = router.redeemMevEthForEthRaw(true, address(this), shares / 2, amountOutMin, block.timestamp, swaps);
         assertGt(assets, 0);
     }
 
+    /// @notice Fuzz test staking Eth
     function testStakeEth(uint80 amountIn) external {
         vm.assume(amountIn > 0.1 ether);
-        vm.assume(amountIn < 100000 ether);
+        vm.assume(amountIn < 100_000 ether);
         // uint256 amountIn = 100 ether;
         vm.deal(address(this), amountIn);
         uint256 amountOutMin = MEVETH.previewDeposit(amountIn) * 99 / 100;
@@ -77,9 +95,10 @@ contract MevEthRouterTest is DSTest {
         assertGt(shares, 0);
     }
 
+    /// @notice Fuzz test redeeming Eth
     function testRedeemEth(uint80 amountIn) external {
         vm.assume(amountIn > 2 ether);
-        vm.assume(amountIn < 10000 ether);
+        vm.assume(amountIn < 10_000 ether);
         // uint256 amountIn = 100 ether;
         vm.deal(address(this), amountIn);
         uint256 shares = router.stakeEthForMevEth{ value: amountIn }(address(this), amountIn, 1, block.timestamp);

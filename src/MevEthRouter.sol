@@ -75,8 +75,6 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     IGyroECLPMath.Params internal params;
     IGyroECLPMath.DerivedParams internal derived;
 
-    IGyroECLPMath.Vector2 internal inv;
-
     /// @notice struct for pool reserves
     /// @param reserveIn amount of reserves (or virtual reserves) in pool for tokenIn
     /// @param reserveOut amount of reserves (or virtual reserves) in pool for tokenOut
@@ -292,11 +290,20 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         pools[7].pair = address(MEVETH);
     }
 
+    function balancerInvariant(uint256[] memory balances) internal view returns (IGyroECLPMath.Vector2 memory inv) {
+        // for some reason GyroECLPMath lib has a different selector
+        bytes memory data = abi.encodeWithSelector(0x78ace857, balances, params, derived);
+        (, bytes memory returnData) = address(gyroMath).staticcall(data);
+        (int256 invariant, int256 err) = abi.decode(returnData, (int256, int256));
+        // (int256 invariant, int256 err) = gyroMath.calculateInvariantWithError(balances, params, derived);
+        inv = IGyroECLPMath.Vector2(invariant + 2 * err, invariant);
+    }
+
     /// @notice Fetches swap data for each pair and amounts given an input amount
     /// @param amountIn Amount in for first token in path
     /// @param amountOutMin Min amount out
     /// @return swaps Array Swap data for each user swap in path
-    function getStakeRoute(uint256 amountIn, uint256 amountOutMin) public returns (Swap memory swaps) {
+    function getStakeRoute(uint256 amountIn, uint256 amountOutMin) public view returns (Swap memory swaps) {
         swaps.pools = _getPools();
         swaps.tokenIn = address(WETH09);
         swaps.tokenOut = address(MEVETH);
@@ -318,7 +325,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     /// @param amountIn Amount in for first token in path
     /// @param amountOutMin Min amount out
     /// @return swaps Array Swap data for each user swap in path
-    function getRedeemRoute(bool useQueue, uint256 amountIn, uint256 amountOutMin) public returns (Swap memory swaps) {
+    function getRedeemRoute(bool useQueue, uint256 amountIn, uint256 amountOutMin) public view returns (Swap memory swaps) {
         swaps.pools = _getPools();
         swaps.tokenIn = address(MEVETH);
         swaps.tokenOut = address(WETH09);
@@ -326,6 +333,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         uint256[8] memory amountsOut;
         {
             Reserve[8] memory reserves = _getReserves(false, swaps.pools);
+
             // find optimal route
             (amountsIn, amountsOut) = _optimalRouteOut(useQueue, false, amountIn, amountOutMin, reserves);
         }
@@ -338,7 +346,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     /// @dev populates and returns Reserve struct array for each pool address
     /// @param isDeposit true if deposit eth, false if redeem
     /// @param pools 5 element array of Pool structs populated with pool addresses
-    function _getReserves(bool isDeposit, Pool[8] memory pools) internal returns (Reserve[8] memory reserves) {
+    function _getReserves(bool isDeposit, Pool[8] memory pools) internal view returns (Reserve[8] memory reserves) {
         // 2 V2 pools
         for (uint256 i; i < 2; i = _inc(i)) {
             if (!MevEthLibrary.isContract(pools[i].pair)) continue;
@@ -363,15 +371,6 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         {
             uint256[] memory balances = _getAllBalances();
             (reserves[5].reserveIn, reserves[5].reserveOut) = isDeposit ? (balances[1], balances[0]) : (balances[0], balances[1]);
-
-            // for some reason GyroECLPMath lib has a different selector
-            bytes memory data = abi.encodeWithSelector(0x78ace857, balances, params, derived);
-            (, bytes memory returnData) = address(gyroMath).staticcall(data);
-            (int256 invariant, int256 err) = abi.decode(returnData, (int256, int256));
-            // (int256 invariant, int256 err) = gyroMath.calculateInvariantWithError(balances, params, derived);
-            if (invariant != inv.y) {
-                inv = IGyroECLPMath.Vector2(invariant + 2 * err, invariant);
-            }
         }
         // Curve CryptoV2 (i=6)
         // Note: Curve token order is opposite from balancer / uni / sushi
@@ -397,6 +396,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         Reserve[8] memory reserves
     )
         internal
+        view
         returns (uint256[8] memory amountsIn, uint256[8] memory amountsOut)
     {
         // calculate best rate for a single swap (i.e. no splitting)
@@ -404,38 +404,44 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         // get ref rate for splits
         uint256[8] memory amountsOutSingleEth;
 
-        // first 3 pools have fee of 0.3%
+        // calc balancer invariant
+        uint256[] memory balances = new uint256[](2);
+        balances[0] = isDeposit ? reserves[5].reserveOut : reserves[5].reserveIn;
+        balances[1] = isDeposit ? reserves[5].reserveIn : reserves[5].reserveOut;
+        IGyroECLPMath.Vector2 memory inv = balancerInvariant(balances);
+
+        // first 2 pools have fee of 0.3%
         for (uint256 i; i < 2; i = _inc(i)) {
             if (reserves[i].reserveOut > amountOutMin) {
-                amountsOutSingleSwap[i] = amountOutCall(isDeposit, i, amountIn, reserves[i].reserveIn, reserves[i].reserveOut);
+                amountsOutSingleSwap[i] = amountOutCall(isDeposit, i, amountIn, reserves[i].reserveIn, reserves[i].reserveOut, inv);
             }
             if (reserves[i].reserveOut > MIN_LIQUIDITY && reserves[i].reserveIn > MIN_LIQUIDITY && amountIn > MIN_LIQUIDITY) {
-                amountsOutSingleEth[i] = amountOutCall(isDeposit, i, 1 ether, reserves[i].reserveIn, reserves[i].reserveOut);
+                amountsOutSingleEth[i] = amountOutCall(isDeposit, i, 1 ether, reserves[i].reserveIn, reserves[i].reserveOut, inv);
             }
         }
-        // next 2 pools have variable rates
+        // next 3 pools have variable rates
         for (uint256 i = 2; i < 5; i = _inc(i)) {
             if (reserves[i].reserveOut > amountOutMin && reserves[i].reserveIn > amountIn) {
-                amountsOutSingleSwap[i] = amountOutCall(isDeposit, i, amountIn, reserves[i].reserveIn, reserves[i].reserveOut);
+                amountsOutSingleSwap[i] = amountOutCall(isDeposit, i, amountIn, reserves[i].reserveIn, reserves[i].reserveOut, inv);
             }
             if (reserves[i].reserveOut > MIN_LIQUIDITY && reserves[i].reserveIn > MIN_LIQUIDITY && amountIn > MIN_LIQUIDITY) {
-                amountsOutSingleEth[i] = amountOutCall(isDeposit, i, 1 ether, reserves[i].reserveIn, reserves[i].reserveOut);
+                amountsOutSingleEth[i] = amountOutCall(isDeposit, i, 1 ether, reserves[i].reserveIn, reserves[i].reserveOut, inv);
             }
         }
         // Balancer pool (todo: embed amount out calc)
         if (reserves[5].reserveOut > amountOutMin) {
-            amountsOutSingleSwap[5] = amountOutCall(isDeposit, 5, amountIn, reserves[5].reserveIn, reserves[5].reserveOut);
+            amountsOutSingleSwap[5] = amountOutCall(isDeposit, 5, amountIn, reserves[5].reserveIn, reserves[5].reserveOut, inv);
         }
         if (reserves[5].reserveOut > MIN_LIQUIDITY && amountIn > MIN_LIQUIDITY) {
-            amountsOutSingleEth[5] = amountOutCall(isDeposit, 5, 1 ether, reserves[5].reserveIn, reserves[5].reserveOut);
+            amountsOutSingleEth[5] = amountOutCall(isDeposit, 5, 1 ether, reserves[5].reserveIn, reserves[5].reserveOut, inv);
         }
 
         // Curve pool (todo: embed amount out calc)
         if (reserves[6].reserveOut > amountOutMin) {
-            amountsOutSingleSwap[6] = amountOutCall(isDeposit, 6, amountIn, reserves[6].reserveIn, reserves[6].reserveOut);
+            amountsOutSingleSwap[6] = amountOutCall(isDeposit, 6, amountIn, reserves[6].reserveIn, reserves[6].reserveOut, inv);
         }
         if (reserves[6].reserveOut > MIN_LIQUIDITY && amountIn > MIN_LIQUIDITY) {
-            amountsOutSingleEth[6] = amountOutCall(isDeposit, 6, 1 ether, reserves[6].reserveIn, reserves[6].reserveOut);
+            amountsOutSingleEth[6] = amountOutCall(isDeposit, 6, 1 ether, reserves[6].reserveIn, reserves[6].reserveOut, inv);
         }
         // MevEth
         if (isDeposit) {
@@ -461,7 +467,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
             }
         }
 
-        (amountsIn, amountsOut) = _splitSwapOut(isDeposit, amountIn, amountsOutSingleSwap, amountsOutSingleEth, reserves);
+        (amountsIn, amountsOut) = _splitSwapOut(isDeposit, amountIn, inv, amountsOutSingleSwap, amountsOutSingleEth, reserves);
     }
 
     function _scalingFactor(bool token0) internal view returns (uint256 scalingFactor) {
@@ -499,7 +505,17 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         return balances;
     }
 
-    function balancerAmountOut(bool isDeposit, uint256 amountIn, uint256 reserveIn, uint256 reserveOut) internal view returns (uint256 amountOut) {
+    function balancerAmountOut(
+        bool isDeposit,
+        uint256 amountIn,
+        uint256 reserveIn,
+        uint256 reserveOut,
+        IGyroECLPMath.Vector2 memory inv
+    )
+        internal
+        view
+        returns (uint256 amountOut)
+    {
         uint256 scalingFactorTokenIn = _scalingFactor(!isDeposit);
         uint256 scalingFactorTokenOut = _scalingFactor(isDeposit);
         uint256[] memory balances = new uint256[](2);
@@ -516,7 +532,18 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         amountOut = abi.decode(returnData, (uint256)) * 1 ether / scalingFactorTokenOut;
     }
 
-    function amountOutCall(bool isDeposit, uint256 i, uint256 amountIn, uint256 reserveIn, uint256 reserveOut) internal returns (uint256 amountOut) {
+    function amountOutCall(
+        bool isDeposit,
+        uint256 i,
+        uint256 amountIn,
+        uint256 reserveIn,
+        uint256 reserveOut,
+        IGyroECLPMath.Vector2 memory inv
+    )
+        internal
+        view
+        returns (uint256 amountOut)
+    {
         if (i < 2) {
             if (reserveOut > MIN_LIQUIDITY && amountIn < reserveOut) {
                 amountOut = MevEthLibrary.getAmountOut(amountIn, reserveIn, reserveOut);
@@ -529,7 +556,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         // Balancer pool
         if (i == 5) {
             if (reserveOut > MIN_LIQUIDITY && amountIn < reserveOut / 2) {
-                amountOut = balancerAmountOut(isDeposit, amountIn, reserveIn, reserveOut);
+                amountOut = balancerAmountOut(isDeposit, amountIn, reserveIn, reserveOut, inv);
             }
         }
 
@@ -550,11 +577,13 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     function _splitSwapOut(
         bool isDeposit,
         uint256 amountIn,
+        IGyroECLPMath.Vector2 memory inv,
         uint256[8] memory amountsOutSingleSwap,
         uint256[8] memory amountsOutSingleEth,
         Reserve[8] memory reserves
     )
         internal
+        view
         returns (uint256[8] memory amountsIn, uint256[8] memory amountsOut)
     {
         uint256[8] memory index = MevEthLibrary._sortArray(amountsOutSingleSwap); // sorts in ascending order (i.e. best price is last)
@@ -587,7 +616,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
                 if (index2[i] == 7) {
                     amountsIn[index2[i]] = amountIn - cumulativeAmount;
                     amountsOut[index2[i]] =
-                        amountOutCall(isDeposit, index2[i], amountsIn[index2[i]], reserves[index2[i]].reserveIn, reserves[index2[i]].reserveOut);
+                        amountOutCall(isDeposit, index2[i], amountsIn[index2[i]], reserves[index2[i]].reserveIn, reserves[index2[i]].reserveOut, inv);
                     return (amountsIn, amountsOut);
                 } // meveth rate is fixed so no more iterations required
 
@@ -600,7 +629,8 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
                     index2[i],
                     amountsOutSingleEth[index2[_dec(i)]],
                     reserves[index2[i]].reserveIn,
-                    reserves[index2[i]].reserveOut
+                    reserves[index2[i]].reserveOut,
+                    inv
                 );
                 // UniV3 adjustment
                 if (index2[i] < 5 && index2[i] > 1 && amountsIn[index2[i]] > 8 * MIN_LIQUIDITY) {
@@ -624,9 +654,11 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         uint256 index,
         uint256 amountsOutSingleEthTarget,
         uint256 reserveIn,
-        uint256 reserveOut
+        uint256 reserveOut,
+        IGyroECLPMath.Vector2 memory inv
     )
         internal
+        view
         returns (uint256 amountInToSync, uint256 amountOut)
     {
         // todo: make more efficient
@@ -654,7 +686,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
                 return (amountInToSync, amountOut);
             }
 
-            amountOut = amountOutCall(isDeposit, index, amount, reserveIn, reserveOut);
+            amountOut = amountOutCall(isDeposit, index, amount, reserveIn, reserveOut, inv);
             if (amountOut * 1 ether / amountsOutSingleEthTarget < amount) break;
             amountInToSync = amount;
             if (endLoop) return (amountInToSync, amountOut);
@@ -671,7 +703,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
                     endLoop = true;
                 }
 
-                amountOut = amountOutCall(isDeposit, index, amount, reserveIn, reserveOut);
+                amountOut = amountOutCall(isDeposit, index, amount, reserveIn, reserveOut, inv);
                 if (amountOut * 1 ether / amountsOutSingleEthTarget < amount) break;
                 amountInToSync = amount;
                 if (endLoop) return (amountInToSync, amountOut);
@@ -756,15 +788,33 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         }
     }
 
-    function _swapUniV3Call(bool isReverse, uint24 fee, address tokenIn, address tokenOut, uint256 amountIn) internal virtual returns (uint256 amountOut) {
+    function _swapUniV3Call(
+        bool isReverse,
+        uint24 fee,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    )
+        internal
+        view
+        virtual
+        returns (uint256 amountOut)
+    {
         uint160 sqrtPriceLimitX96 = isReverse ? MAX_SQRT_RATIO - 1 : MIN_SQRT_RATIO + 1;
         IQuoterV2.QuoteExactInputSingleParams memory quoterParams =
             IQuoterV2.QuoteExactInputSingleParams({ tokenIn: tokenIn, tokenOut: tokenOut, amountIn: amountIn, fee: fee, sqrtPriceLimitX96: sqrtPriceLimitX96 });
-        try quoter.quoteExactInputSingle(quoterParams) returns (uint256 out) {
-            amountOut = out;
-        } catch {
+        bytes memory input = abi.encodeWithSelector(quoter.quoteExactInputSingle.selector, quoterParams);
+        (bool success, bytes memory data) = address(quoter).staticcall(input);
+        if (!success) {
             amountOut = 0;
+        } else {
+            (amountOut) = abi.decode(data, (uint256));
         }
+        // try quoter.quoteExactInputSingle(quoterParams) returns (uint256 out) {
+        //     amountOut = out;
+        // } catch {
+        //     amountOut = 0;
+        // }
         // (amountOut,,,) = quoter.quoteExactInputSingle(quoterParams);
     }
 
