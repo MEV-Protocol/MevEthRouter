@@ -59,6 +59,11 @@ Fill in `PRIVATE_KEY` and `ETHERSCAN_KEY` in `.env`.
 - [x] Redeem route with queue toggle and slippage tolerance
 - [ ] Documentation of derived math and code
 - [ ] Gas optimization
+  - [x] Abstract route finder for off-chain call
+  - [ ] Balancer and Curve math instead of calls for amountsOut
+  - [ ] Optimize storage
+  - [ ] Optimize route finding
+  - [ ] Remove unused code
 
 ### V2 
 

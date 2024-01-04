@@ -10,6 +10,7 @@ import "./interfaces/IMevEth.sol";
 import "./interfaces/IRateProvider.sol";
 import "./interfaces/IQuoterV2.sol";
 import "./interfaces/IGyroECLPMath.sol";
+import "./interfaces/IMevEthRouter.sol";
 import "./interfaces/IUniswapV3SwapCallback.sol";
 import "./libraries/MevEthLibrary.sol";
 import { ERC20 } from "solmate/tokens/ERC20.sol";
@@ -21,7 +22,7 @@ import { SafeTransferLib } from "solmate/utils/SafeTransferLib.sol";
 /// @notice mevETH Stake / Redeem optimzed router
 /// @dev V1 optimized for 2 routes; Eth (or Weth) => mevEth or mevEth => Eth (or Weth)
 ///      Aggregated routes are from mevEth deposits / withdraws, Balancer Gyro ECLP, Curve V2 and Uniswap V3 / V2 and Sushiswap
-contract MevEthRouter is IUniswapV3SwapCallback {
+contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     using SafeTransferLib for ERC20;
     using SafeTransferLib for WETH;
 
@@ -85,28 +86,6 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         uint256 reserveOut;
     }
 
-    /// @notice struct for pool swap info
-    /// @param pair pair / pool address (sushi, univ2, univ3 (3 pools))
-    /// @param amountIn amount In for swap
-    /// @param amountOut amount Out for swap
-    struct Pool {
-        address pair;
-        uint256 amountIn;
-        uint256 amountOut;
-    }
-
-    /// @notice struct for swap info
-    /// @param isDeposit true if deposit eth, false if redeem
-    /// @param tokenIn address of token In
-    /// @param tokenOut address of token Out
-    /// @param pools 5 element array of pool split swap info
-    struct Swap {
-        bool isDeposit;
-        address tokenIn;
-        address tokenOut;
-        Pool[8] pools; // 8 pools (sushi, univ2, univ3 (3 pools), mevEth, Balancer Gyro ECLP, Curve V2)
-    }
-
     constructor(address _gov) {
         if (_gov == address(0)) {
             gov = tx.origin;
@@ -161,6 +140,60 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         }
     }
 
+    /// @notice Gas efficient stakeEthForMevEth
+    /// @dev requires calling getStakeRoute first
+    /// @param receiver Address of MevEth receiver
+    /// @param amountIn Amount of eth or weth to deposit
+    /// @param amountOutMin Min amount of MevEth to receive
+    /// @param deadline Timestamp deadline
+    /// @param swaps output of getStakeRoute
+    /// @return shares Amount of MevEth received
+    function stakeEthForMevEthRaw(
+        address receiver,
+        uint256 amountIn,
+        uint256 amountOutMin,
+        uint256 deadline,
+        Swap calldata swaps
+    )
+        external
+        payable
+        returns (uint256 shares)
+    {
+        // check inputs
+        // check receiver
+        if (receiver == address(0)) revert ZeroAddress();
+        // check block.timestamp > deadline (timestamp in seconds)
+        ensure(deadline);
+        // check amountIn
+        if (amountIn == 0) revert ZeroAmount();
+        // check eth or weth deposit
+        if (msg.value != amountIn) {
+            // either weth or wrong amount
+            // transfer weth amountIn from sender, will revert if insufficient allowance
+            WETH09.safeTransferFrom(msg.sender, address(this), amountIn);
+        } else {
+            WETH09.deposit{ value: amountIn }();
+        }
+
+        // UniV2 / Sushi require amounts transfered directly to pool
+        for (uint256 i; i < 2; i = _inc(i)) {
+            if (_isNonZero(swaps.pools[i].amountIn)) {
+                WETH09.safeTransfer(swaps.pools[i].pair, swaps.pools[i].amountIn);
+            }
+        }
+
+        // execute swaps, retreive actual amounts
+        uint256[] memory amounts = _swap(true, receiver, deadline, swaps);
+        // check output is sufficient
+        if (amountOutMin > amounts[1]) revert InsufficientOutputAmount();
+        // assign returned shares
+        shares = amounts[1];
+        //  refund V3 dust if any
+        if (amounts[0] < amountIn && (amountIn - amounts[0]) > 50_000 * block.basefee) {
+            WETH09.safeTransfer(msg.sender, amountIn - amounts[0]);
+        }
+    }
+
     /// @notice Perform optimal route for converting MevEth => Eth
     /// @param receiver Address of Eth receiver
     /// @param shares Amount of meveth to redeem
@@ -177,9 +210,57 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         if (shares == 0) revert ZeroAmount();
         // check eth or weth deposit
         ERC20(address(MEVETH)).safeTransferFrom(msg.sender, address(this), shares);
-        
+
         // get optimal route
         Swap memory swaps = getRedeemRoute(useQueue, shares, amountOutMin);
+
+        // UniV2 / Sushi require amounts transfered directly to pool
+        for (uint256 i; i < 2; i = _inc(i)) {
+            if (_isNonZero(swaps.pools[i].amountIn)) {
+                ERC20(address(MEVETH)).safeTransfer(swaps.pools[i].pair, swaps.pools[i].amountIn);
+            }
+        }
+
+        // execute swaps, retreive actual amounts
+        uint256[] memory amounts = _swap(useQueue, receiver, deadline, swaps);
+        // check output is sufficient
+        if (amountOutMin > amounts[1]) revert InsufficientOutputAmount();
+        // assign returned shares
+        assets = amounts[1];
+        //  refund V3 dust if any
+        if (amounts[0] < shares && (shares - amounts[0]) > 50_000 * block.basefee) {
+            ERC20(address(MEVETH)).safeTransfer(msg.sender, shares - amounts[0]);
+        }
+    }
+
+    /// @notice Gas efficient redeemMevEthForEth
+    /// @dev requires calling getRedeemRoute first
+    /// @param receiver Address of Eth receiver
+    /// @param shares Amount of meveth to redeem
+    /// @param amountOutMin Min amount of eth to receive
+    /// @param deadline Timestamp deadline
+    /// @param swaps output of getRedeemRoute
+    /// @return assets Eth received
+    function redeemMevEthForEthRaw(
+        bool useQueue,
+        address receiver,
+        uint256 shares,
+        uint256 amountOutMin,
+        uint256 deadline,
+        Swap calldata swaps
+    )
+        external
+        returns (uint256 assets)
+    {
+        // check inputs
+        // check receiver
+        if (receiver == address(0)) revert ZeroAddress();
+        // check block.timestamp > deadline (timestamp in seconds)
+        ensure(deadline);
+        // check amountIn
+        if (shares == 0) revert ZeroAmount();
+        // check eth or weth deposit
+        ERC20(address(MEVETH)).safeTransferFrom(msg.sender, address(this), shares);
 
         // UniV2 / Sushi require amounts transfered directly to pool
         for (uint256 i; i < 2; i = _inc(i)) {
@@ -216,7 +297,7 @@ contract MevEthRouter is IUniswapV3SwapCallback {
     /// @param amountIn Amount in for first token in path
     /// @param amountOutMin Min amount out
     /// @return swaps Array Swap data for each user swap in path
-    function getStakeRoute(uint256 amountIn, uint256 amountOutMin) internal returns (Swap memory swaps) {
+    function getStakeRoute(uint256 amountIn, uint256 amountOutMin) public returns (Swap memory swaps) {
         swaps.pools = _getPools();
         swaps.tokenIn = address(WETH09);
         swaps.tokenOut = address(MEVETH);
@@ -238,7 +319,7 @@ contract MevEthRouter is IUniswapV3SwapCallback {
     /// @param amountIn Amount in for first token in path
     /// @param amountOutMin Min amount out
     /// @return swaps Array Swap data for each user swap in path
-    function getRedeemRoute(bool useQueue, uint256 amountIn, uint256 amountOutMin) internal returns (Swap memory swaps) {
+    function getRedeemRoute(bool useQueue, uint256 amountIn, uint256 amountOutMin) public returns (Swap memory swaps) {
         swaps.pools = _getPools();
         swaps.tokenIn = address(MEVETH);
         swaps.tokenOut = address(WETH09);
@@ -283,13 +364,13 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         {
             uint256[] memory balances = _getAllBalances();
             (reserves[5].reserveIn, reserves[5].reserveOut) = isDeposit ? (balances[1], balances[0]) : (balances[0], balances[1]);
-            
+
             // for some reason GyroECLPMath lib has a different selector
             bytes memory data = abi.encodeWithSelector(0x78ace857, balances, params, derived);
             (, bytes memory returnData) = address(gyroMath).staticcall(data);
             (int256 invariant, int256 err) = abi.decode(returnData, (int256, int256));
             // (int256 invariant, int256 err) = gyroMath.calculateInvariantWithError(balances, params, derived);
-            if (invariant != inv.y){
+            if (invariant != inv.y) {
                 inv = IGyroECLPMath.Vector2(invariant + 2 * err, invariant);
             }
         }
@@ -380,7 +461,7 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                 // todo: partial withdraws based on balance
             }
         }
-        
+
         (amountsIn, amountsOut) = _splitSwapOut(isDeposit, amountIn, amountsOutSingleSwap, amountsOutSingleEth, reserves);
     }
 
@@ -442,7 +523,7 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                 amountOut = MevEthLibrary.getAmountOut(amountIn, reserveIn, reserveOut);
             }
         } else if (i < 5) {
-            if (reserveOut > MIN_LIQUIDITY && reserveIn > MIN_LIQUIDITY && amountIn < reserveOut / 4 && amountIn < uniV3Caps[i-2]) {
+            if (reserveOut > MIN_LIQUIDITY && reserveIn > MIN_LIQUIDITY && amountIn < reserveOut / 4 && amountIn < uniV3Caps[i - 2]) {
                 amountOut = MevEthLibrary.getAmountOutFee(amountIn, reserveIn, reserveOut, MevEthLibrary.getFee(i));
             }
         }
@@ -610,13 +691,14 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                     reserves[index2[i]].reserveOut
                 );
                 // UniV3 adjustment
-                if (index2[i] < 5 && index2[i] > 1 && amountsIn[index2[i]] > 8 * MIN_LIQUIDITY){
-                    amountsOut[index2[i]] = _swapUniV3Call(!isDeposit, uint24(MevEthLibrary.getFee(index2[i])), address(MEVETH), address(WETH09), amountsIn[index2[i]]);
+                if (index2[i] < 5 && index2[i] > 1 && amountsIn[index2[i]] > 8 * MIN_LIQUIDITY) {
+                    amountsOut[index2[i]] =
+                        _swapUniV3Call(!isDeposit, uint24(MevEthLibrary.getFee(index2[i])), address(MEVETH), address(WETH09), amountsIn[index2[i]]);
                     if (amountsOut[index2[i]] == 0) {
                         amountsIn[index2[i]] = 0;
                     }
                 }
-                
+
                 cumulativeAmount = cumulativeAmount + amountsIn[index2[i]];
                 if (cumulativeAmount == amountIn) break;
             }
@@ -642,12 +724,12 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         if (chunk < precision) {
             chunk = precision;
         }
-        
+
         for (uint256 i; i < 10; i = _inc(i)) {
             amount = amount + chunk;
             bool endLoop;
-            if (index > 1 && index < 5 && amount > uniV3Caps[index-2]) {
-                amount = uniV3Caps[index-2];
+            if (index > 1 && index < 5 && amount > uniV3Caps[index - 2]) {
+                amount = uniV3Caps[index - 2];
                 endLoop = true;
                 // hard cap univ3 amounts as they become more unpredictable
             }
@@ -659,7 +741,7 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                 amountOut = 0;
                 return (amountInToSync, amountOut);
             }
-            
+
             amountOut = amountOutCall(isDeposit, index, amount, reserveIn, reserveOut);
             if (amountOut * 1 ether / amountsOutSingleEthTarget < amount) break;
             amountInToSync = amount;
@@ -754,39 +836,19 @@ contract MevEthRouter is IUniswapV3SwapCallback {
         // amountOut = isReverse ? uint256(-(amount0)) : uint256(-(amount1));
         // amountInActual = isReverse ? uint256(amount1) : uint256(amount0);
 
-        try IUniswapV3Pool(pair).swap(to, !isReverse, int256(amountIn), sqrtPriceLimitX96, data)
-            returns (int256 amount0, int256 amount1) 
-        {
+        try IUniswapV3Pool(pair).swap(to, !isReverse, int256(amountIn), sqrtPriceLimitX96, data) returns (int256 amount0, int256 amount1) {
             amountOut = isReverse ? uint256(-(amount0)) : uint256(-(amount1));
             amountInActual = isReverse ? uint256(amount1) : uint256(amount0);
         } catch {
             amountOut = 0;
         }
-        
     }
 
-    function _swapUniV3Call(
-        bool isReverse,
-        uint24 fee,
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn
-    )
-        internal
-        virtual
-        returns (uint256 amountOut)
-    {
+    function _swapUniV3Call(bool isReverse, uint24 fee, address tokenIn, address tokenOut, uint256 amountIn) internal virtual returns (uint256 amountOut) {
         uint160 sqrtPriceLimitX96 = isReverse ? MAX_SQRT_RATIO - 1 : MIN_SQRT_RATIO + 1;
-        IQuoterV2.QuoteExactInputSingleParams memory quoterParams = IQuoterV2.QuoteExactInputSingleParams({
-            tokenIn: tokenIn,
-            tokenOut: tokenOut,
-            amountIn: amountIn,
-            fee: fee,
-            sqrtPriceLimitX96: sqrtPriceLimitX96
-        });
-        try quoter.quoteExactInputSingle(quoterParams)
-            returns (uint256 out)
-        {
+        IQuoterV2.QuoteExactInputSingleParams memory quoterParams =
+            IQuoterV2.QuoteExactInputSingleParams({ tokenIn: tokenIn, tokenOut: tokenOut, amountIn: amountIn, fee: fee, sqrtPriceLimitX96: sqrtPriceLimitX96 });
+        try quoter.quoteExactInputSingle(quoterParams) returns (uint256 out) {
             amountOut = out;
         } catch {
             amountOut = 0;
@@ -825,7 +887,7 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                     // swap
                 amounts[1] = amounts[1] + amountOut;
                 if (amountOut == 0) {
-                    // uniV3 swap failed if here 
+                    // uniV3 swap failed if here
                     if (useQueue) {
                         // add to mevEth order
                         swaps.pools[7].amountIn = swaps.pools[7].amountIn + amountIn;
@@ -835,7 +897,7 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                             swaps.pools[5].amountIn = swaps.pools[5].amountIn + amountIn;
                         } else {
                             swaps.pools[6].amountIn = swaps.pools[6].amountIn + amountIn;
-                        }                        
+                        }
                     }
                 }
             }
@@ -874,9 +936,12 @@ contract MevEthRouter is IUniswapV3SwapCallback {
                 WETH09.approve(address(MEVETH), amountIn);
                 amounts[1] = amounts[1] + MEVETH.deposit(amountIn, to);
             } else {
-                // todo: add toggle for queue
                 ERC20(address(MEVETH)).approve(address(MEVETH), amountIn);
-                amounts[1] = amounts[1] + MEVETH.withdrawQueue(MEVETH.previewRedeem(amountIn) - 1, to, address(this));
+                if (useQueue) {
+                    amounts[1] = amounts[1] + MEVETH.withdrawQueue(MEVETH.previewRedeem(amountIn) - 1, to, address(this));
+                } else {
+                    amounts[1] = amounts[1] + MEVETH.redeem(amountIn, to, address(this));
+                }
             }
         }
     }

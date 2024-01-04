@@ -8,8 +8,9 @@ import { MevEthRouter } from "../src/MevEthRouter.sol";
 import { IUniswapV2Router02 } from "../src/interfaces/IUniswapV2Router.sol";
 import { IUniswapV2Pair } from "../src/interfaces/IUniswapV2Pair.sol";
 import { IWETH } from "../src/interfaces/IWETH.sol";
+import { IMevEth } from "../src/interfaces/IMevEth.sol";
+import { IMevEthRouter } from "../src/interfaces/IMevEthRouter.sol";
 import { ERC20 } from "solmate/tokens/ERC20.sol";
-import "src/interfaces/IMevEth.sol";
 
 /// @title MevEthRouterTest
 contract MevEthRouterTest is DSTest {
@@ -38,6 +39,33 @@ contract MevEthRouterTest is DSTest {
     }
 
     receive() external payable { }
+
+    function testStakeEthRaw(uint80 amountIn) external {
+        vm.assume(amountIn > 0.1 ether);
+        vm.assume(amountIn < 100_000 ether);
+        // uint256 amountIn = 100 ether;
+        vm.deal(address(this), amountIn);
+        uint256 amountOutMin = MEVETH.previewDeposit(amountIn) * 99 / 100;
+        IMevEthRouter.Swap memory swaps = router.getStakeRoute(amountIn, amountOutMin);
+        uint256 shares = router.stakeEthForMevEthRaw{ value: amountIn }(address(this), amountIn, amountOutMin, block.timestamp, swaps);
+        assertGt(shares, 0);
+    }
+
+    function testRedeemEthRaw(uint80 amountIn) external {
+        vm.assume(amountIn > 2 ether);
+        vm.assume(amountIn < 10_000 ether);
+        // uint256 amountIn = 100 ether;
+        vm.deal(address(this), amountIn);
+        uint256 shares = router.stakeEthForMevEth{ value: amountIn }(address(this), amountIn, 1, block.timestamp);
+        uint256 amountOutMin = 1;
+        ERC20(address(MEVETH)).approve(address(router), shares);
+        IMevEthRouter.Swap memory swaps = router.getRedeemRoute(false, shares / 2, amountOutMin);
+        uint256 assets = router.redeemMevEthForEthRaw(false, address(this), shares / 2, amountOutMin, block.timestamp, swaps);
+        assertGt(assets, 0);
+        swaps = router.getRedeemRoute(true, shares / 2, amountOutMin);
+        assets = router.redeemMevEthForEthRaw(true, address(this), shares / 2, amountOutMin, block.timestamp, swaps);
+        assertGt(assets, 0);
+    }
 
     function testStakeEth(uint80 amountIn) external {
         vm.assume(amountIn > 0.1 ether);
