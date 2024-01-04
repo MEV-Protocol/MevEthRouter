@@ -6,8 +6,8 @@ Pools
 - Curve
 - Balancer
 - Uniswap V3 0.30%
-- Uniswap V3 0.05%
 - Uniswap V3 1.00%
+- Uniswap V3 0.05%
 - Sushiswap
 - Uniswap V2
 
