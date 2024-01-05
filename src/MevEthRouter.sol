@@ -57,7 +57,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     bytes32 internal constant SUSHI_FACTORY_HASH = 0xe18a34eb0e04b04f7a0ac29a6e80748dca96319b42c54d679cb821dca90c6303;
     /// @dev UniswapV2 factory init pair code hash
     bytes32 internal constant UNIV2_FACTORY_HASH = 0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f;
-    uint256 constant MIN_LIQUIDITY = 1 ether;
+    uint256 internal constant MIN_LIQUIDITY = 1 ether;
 
     /// @dev Governence for sweeping dust
     address internal gov;
@@ -633,9 +633,12 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
                     inv
                 );
                 // UniV3 adjustment
+                // Expensive in gas, so only used for high values and preferably called off-chain
                 if (index2[i] < 5 && index2[i] > 1 && amountsIn[index2[i]] > 8 * MIN_LIQUIDITY) {
+                    address tokenIn = isDeposit ? address(WETH09) : address(MEVETH);
+                    address tokenOut = isDeposit ? address(MEVETH) : address(WETH09);
                     amountsOut[index2[i]] =
-                        _swapUniV3Call(!isDeposit, uint24(MevEthLibrary.getFee(index2[i])), address(MEVETH), address(WETH09), amountsIn[index2[i]]);
+                        _swapUniV3Call(!isDeposit, uint24(MevEthLibrary.getFee(index2[i])), tokenIn, tokenOut, amountsIn[index2[i]]);
                     if (amountsOut[index2[i]] == 0) {
                         amountsIn[index2[i]] = 0;
                     }
