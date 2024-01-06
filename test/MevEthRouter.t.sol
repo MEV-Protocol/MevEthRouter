@@ -40,6 +40,32 @@ contract MevEthRouterTest is DSTest {
 
     receive() external payable { }
 
+    /// @dev Fuzz test amountOut Stake call
+    function testamountOutStake(uint80 amountIn) external {
+        vm.assume(amountIn > 0.1 ether);
+        vm.assume(amountIn < 100_000 ether);
+        // vm.deal(address(this), amountIn);
+        bytes memory input = abi.encodeWithSelector(router.amountOutStake.selector, amountIn);
+        (, bytes memory data) = address(router).staticcall(input);
+        (uint256 amountOut, ) = abi.decode(data, (uint256, IMevEthRouter.Swap));
+        assertGt(amountOut, 0);
+    }
+
+    /// @dev Fuzz test amountOut Redeem call
+    function testamountOutRedeem(uint80 amountIn) external {
+        vm.assume(amountIn > 0.1 ether);
+        vm.assume(amountIn < 10_000 ether);
+        // vm.deal(address(this), amountIn);
+        bool useQueue;
+        if (amountIn > 15 ether){
+            useQueue = true;
+        }
+        bytes memory input = abi.encodeWithSelector(router.amountOutRedeem.selector, useQueue, amountIn);
+        (, bytes memory data) = address(router).staticcall(input);
+        (uint256 amountOut, ) = abi.decode(data, (uint256, IMevEthRouter.Swap));
+        assertGt(amountOut, 0);
+    }
+
     /// @notice Fuzz test staking Eth with static call for route
     /// @dev default client side staking eth process, using static call on route finder to save gas
     function testStakeEthRaw(uint80 amountIn) external {

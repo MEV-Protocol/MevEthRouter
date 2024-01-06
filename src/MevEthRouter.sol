@@ -302,7 +302,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     /// @notice Fetches swap data for each pair and amounts given an input amount
     /// @param amountIn Amount in for first token in path
     /// @param amountOutMin Min amount out
-    /// @return swaps Array Swap data for each user swap in path
+    /// @return swaps struct for split order details
     function getStakeRoute(uint256 amountIn, uint256 amountOutMin) public view returns (Swap memory swaps) {
         swaps.pools = _getPools();
         swaps.tokenIn = address(WETH09);
@@ -324,7 +324,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     /// @param useQueue Use redeem queue
     /// @param amountIn Amount in for first token in path
     /// @param amountOutMin Min amount out
-    /// @return swaps Array Swap data for each user swap in path
+    /// @return swaps struct for split order details
     function getRedeemRoute(bool useQueue, uint256 amountIn, uint256 amountOutMin) public view returns (Swap memory swaps) {
         swaps.pools = _getPools();
         swaps.tokenIn = address(MEVETH);
@@ -340,6 +340,29 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         for (uint256 j; j < 8; j = _inc(j)) {
             swaps.pools[j].amountIn = amountsIn[j];
             swaps.pools[j].amountOut = amountsOut[j];
+        }
+    }
+
+    /// @notice Amount out expected from stake
+    /// @param amountIn Amount in for first token in path
+    /// @return amountOut Expected amountOut
+    /// @return swaps struct for split order details
+    function amountOutStake(uint256 amountIn) external view returns (uint256 amountOut, Swap memory swaps) {
+        swaps = getStakeRoute(amountIn, 1);
+        for (uint256 j; j < 8; j = _inc(j)) {
+            amountOut += swaps.pools[j].amountOut;
+        }
+    }
+
+    /// @notice Amount out expected from redeem
+    /// @param useQueue Use redeem queue
+    /// @param amountIn Amount in for first token in path
+    /// @return amountOut Expected amountOut
+    /// @return swaps struct for split order details
+    function amountOutRedeem(bool useQueue, uint256 amountIn) external view returns (uint256 amountOut, Swap memory swaps) {
+        swaps = getRedeemRoute(useQueue, amountIn, 1);
+        for (uint256 j; j < 8; j = _inc(j)) {
+            amountOut += swaps.pools[j].amountOut;
         }
     }
 

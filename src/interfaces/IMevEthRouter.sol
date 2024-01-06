@@ -24,6 +24,8 @@ interface IMevEthRouter {
         Pool[8] pools; // 8 pools (sushi, univ2, univ3 (3 pools), mevEth, Balancer Gyro ECLP, Curve V2)
     }
 
+    function amountOutStake(uint256 amountIn) external view returns (uint256 amountOut, Swap memory swaps);
+    function amountOutRedeem(bool useQueue, uint256 amountIn) external view returns (uint256 amountOut, Swap memory swaps);
     function stakeEthForMevEth(address receiver, uint256 amountIn, uint256 amountOutMin, uint256 deadline) external payable returns (uint256 shares);
     function stakeEthForMevEthRaw(
         address receiver,
