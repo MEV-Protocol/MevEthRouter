@@ -39,12 +39,6 @@ interface IGyroECLPMath {
         int256 y;
     }
 
-    struct QParams {
-        int256 a;
-        int256 b;
-        int256 c;
-    }
-
     function calcOutGivenIn(
         uint256[] memory balances,
         uint256 amountIn,
