@@ -839,7 +839,8 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
             } else {
                 ERC20(address(MEVETH)).approve(address(MEVETH), amountIn);
                 if (useQueue) {
-                    amounts[1] = amounts[1] + MEVETH.withdrawQueue(MEVETH.previewRedeem(amountIn) - 1, to, address(this));
+                    MEVETH.withdrawQueue(MEVETH.previewRedeem(amountIn) - 1, to, address(this));
+                    amounts[1] = amounts[1] + MEVETH.previewRedeem(amountIn);
                 } else {
                     amounts[1] = amounts[1] + MEVETH.redeem(amountIn, to, address(this));
                 }
