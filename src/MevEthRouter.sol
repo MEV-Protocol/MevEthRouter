@@ -391,16 +391,16 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
             }
         } else {
             if (useQueue) {
-                amountsOutSingleSwap[7] = reserves[7].reserveIn * amountIn * 9999 / (10_000 * reserves[7].reserveOut);
+                amountsOutSingleSwap[7] = reserves[7].reserveOut * amountIn * 9999 / (10_000 * reserves[7].reserveIn);
                 if (amountIn > MIN_LIQUIDITY) {
-                    amountsOutSingleEth[7] = reserves[7].reserveIn * 1 ether * 9999 / (10_000 * reserves[7].reserveOut);
+                    amountsOutSingleEth[7] = reserves[7].reserveOut * 1 ether * 9999 / (10_000 * reserves[7].reserveIn);
                 }
             } else {
                 uint256 bal = address(MEVETH).balance;
                 if (bal > amountIn) {
-                    amountsOutSingleSwap[7] = reserves[7].reserveIn * amountIn * 9999 / (10_000 * reserves[7].reserveOut);
+                    amountsOutSingleSwap[7] = reserves[7].reserveOut * amountIn * 9999 / (10_000 * reserves[7].reserveIn);
                     if (amountIn > MIN_LIQUIDITY) {
-                        amountsOutSingleEth[7] = reserves[7].reserveIn * 1 ether * 9999 / (10_000 * reserves[7].reserveOut);
+                        amountsOutSingleEth[7] = reserves[7].reserveOut * 1 ether * 9999 / (10_000 * reserves[7].reserveIn);
                     }
                 }
                 // todo: partial withdraws based on balance
@@ -507,7 +507,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
 
         // MevEth
         if (i == 7) {
-            amountOut = isDeposit ? reserveOut * amountIn / reserveIn : reserveIn * amountIn * 9999 / (10_000 * reserveOut);
+            amountOut = isDeposit ? reserveOut * amountIn / reserveIn : reserveOut * amountIn * 9999 / (10_000 * reserveIn);
         }
     }
 
@@ -822,7 +822,6 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         if (_isNonZero(amountIn)) {
             if (swaps.tokenIn == address(WETH09)) {
                 // Contrary to the other pools, token order is WETH / MEVETH
-                // todo: calc limit
                 WETH09.approve(curveV2Pool, amountIn);
                 amounts[1] = amounts[1] + ICurveV2Pool(curveV2Pool).exchange(0, 1, amountIn, 1, false, to);
             } else {
