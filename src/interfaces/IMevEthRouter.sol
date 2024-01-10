@@ -26,8 +26,8 @@ interface IMevEthRouter {
 
     function amountOutStake(uint256 amountIn) external view returns (uint256 amountOut, Swap memory swaps);
     function amountOutRedeem(bool useQueue, uint256 amountIn) external view returns (uint256 amountOut, Swap memory swaps);
-    function stakeEthForMevEth(address receiver, uint256 amountIn, uint256 amountOutMin, uint256 deadline) external payable returns (uint256 shares);
-    function stakeEthForMevEthRaw(
+
+    function stakeEthForMevEth(
         address receiver,
         uint256 amountIn,
         uint256 amountOutMin,
@@ -37,8 +37,8 @@ interface IMevEthRouter {
         external
         payable
         returns (uint256 shares);
-    function redeemMevEthForEth(bool useQueue, address receiver, uint256 shares, uint256 amountOutMin, uint256 deadline) external returns (uint256 assets);
-    function redeemMevEthForEthRaw(
+
+    function redeemMevEthForEth(
         bool useQueue,
         address receiver,
         uint256 shares,
@@ -48,6 +48,4 @@ interface IMevEthRouter {
     )
         external
         returns (uint256 assets);
-    function getStakeRoute(uint256 amountIn, uint256 amountOutMin) external returns (Swap memory swaps);
-    function getRedeemRoute(bool useQueue, uint256 amountIn, uint256 amountOutMin) external returns (Swap memory swaps);
 }
