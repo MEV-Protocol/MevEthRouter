@@ -46,7 +46,33 @@ contract MevEthRouterTest is DSTest {
         bytes memory input = abi.encodeWithSelector(router.amountOutStake.selector, amountIn);
         (, bytes memory data) = address(router).staticcall(input);
         (uint256 amountOut, IMevEthRouter.Swap memory swaps) = abi.decode(data, (uint256, IMevEthRouter.Swap));
-        assertGt(amountOut, MEVETH.previewDeposit(amountIn) * 98 / 100);
+        assertGt(amountOut, MEVETH.previewDeposit(amountIn) * 999 / 1000);
+        // test stake
+        uint256 shares = router.stakeEthForMevEth{ value: amountIn }(address(this), amountIn, amountOut * 99 / 100, block.timestamp, swaps);
+        assertGt(shares, amountOut * 99 / 100);
+        // test redeem route
+        bool useQueue;
+        if (amountIn > 15 ether) {
+            useQueue = true;
+        }
+        input = abi.encodeWithSelector(router.amountOutRedeem.selector, useQueue, shares);
+        (, data) = address(router).staticcall(input);
+        (amountOut, swaps) = abi.decode(data, (uint256, IMevEthRouter.Swap));
+        assertGt(amountOut, MEVETH.previewRedeem(shares) * 95 /100);
+        // test redeem
+        ERC20(address(MEVETH)).approve(address(router), shares);
+        uint256 assets = router.redeemMevEthForEth(useQueue, address(this), shares, amountOut * 99 / 100, block.timestamp, swaps);
+        assertGt(assets, 0);
+    }
+
+    function testStakePools() external {
+        uint256 amountIn = 10 ether;
+        vm.deal(address(this), amountIn);
+        // test getting swap route
+        bytes memory input = abi.encodeWithSelector(router.amountOutStake.selector, amountIn);
+        (, bytes memory data) = address(router).staticcall(input);
+        (uint256 amountOut, IMevEthRouter.Swap memory swaps) = abi.decode(data, (uint256, IMevEthRouter.Swap));
+        assertGt(amountOut, MEVETH.previewDeposit(amountIn) * 999 / 1000);
         // test stake
         uint256 shares = router.stakeEthForMevEth{ value: amountIn }(address(this), amountIn, amountOut * 99 / 100, block.timestamp, swaps);
         assertGt(shares, 0);
@@ -63,5 +89,14 @@ contract MevEthRouterTest is DSTest {
         ERC20(address(MEVETH)).approve(address(router), shares);
         uint256 assets = router.redeemMevEthForEth(useQueue, address(this), shares, amountOut * 99 / 100, block.timestamp, swaps);
         assertGt(assets, 0);
+    }
+
+    function testEdgeAmount() external {
+        // test redeem route
+        bool useQueue = false;
+        bytes memory input = abi.encodeWithSelector(router.amountOutRedeem.selector, useQueue, 6 ether);
+        (,bytes memory data) = address(router).staticcall(input);
+        (uint256 amountOut, ) = abi.decode(data, (uint256, IMevEthRouter.Swap));
+        assertGt(amountOut, 5.98 ether);
     }
 }

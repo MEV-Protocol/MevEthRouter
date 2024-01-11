@@ -221,6 +221,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
     /// @param amountOutMin Min amount out
     /// @return swaps struct for split order details
     function getStakeRoute(uint256 amountIn, uint256 amountOutMin) internal view returns (Swap memory swaps) {
+        swaps.isDeposit = true;
         swaps.pools = _getPools();
         swaps.tokenIn = address(WETH09);
         swaps.tokenOut = address(MEVETH);
@@ -642,7 +643,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
 
                 {
                     uint256 amountOutTmp = amountOutCall(isDeposit, index, amount, reserveIn, reserveOut, inv);
-                    if (amountOut * 1 ether / amountsOutSingleEthTarget < amount) break;
+                    if (amountOutTmp * 1 ether / amountsOutSingleEthTarget < amount) break;
                     amountOut = amountOutTmp;
                 }
 
