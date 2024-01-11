@@ -396,15 +396,6 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
                 if (amountIn > MIN_LIQUIDITY) {
                     amountsOutSingleEth[7] = reserves[7].reserveOut * 1 ether * 9999 / (10_000 * reserves[7].reserveIn);
                 }
-            } else {
-                uint256 bal = address(MEVETH).balance;
-                if (bal > amountIn) {
-                    amountsOutSingleSwap[7] = reserves[7].reserveOut * amountIn * 9999 / (10_000 * reserves[7].reserveIn);
-                    if (amountIn > MIN_LIQUIDITY) {
-                        amountsOutSingleEth[7] = reserves[7].reserveOut * 1 ether * 9999 / (10_000 * reserves[7].reserveIn);
-                    }
-                }
-                // todo: partial withdraws based on balance
             }
         }
 
@@ -539,30 +530,32 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
             // calculate amount to sync prices cascading through each pool with best prices first, while cumulative amount < amountIn
             for (uint256 i = 7; _isNonZero(i); i = _dec(i)) {
                 if (index2[i] == 7 || _isZero(amountsOutSingleEth[index2[_dec(i)]])) {
+                    // meveth rate is fixed so no more iterations required
+                    // other case is there are no more viable pools to swap
                     amountsIn[index2[i]] = amountIn - cumulativeAmount;
                     amountsOut[index2[i]] =
                         amountOutCall(isDeposit, index2[i], amountsIn[index2[i]], reserves[index2[i]].reserveIn, reserves[index2[i]].reserveOut, inv);
-                    return (amountsIn, amountsOut);
-                } // meveth rate is fixed so no more iterations required
-
-                (amountsIn[index2[i]], amountsOut[index2[i]]) = amountToSync(
-                    isDeposit,
-                    amountIn,
-                    cumulativeAmount,
-                    index2[i],
-                    amountsOutSingleEth[index2[_dec(i)]],
-                    reserves[index2[i]].reserveIn,
-                    reserves[index2[i]].reserveOut,
-                    inv
-                );
+                    // return (amountsIn, amountsOut);
+                } else {
+                    (amountsIn[index2[i]], amountsOut[index2[i]]) = amountToSync(
+                        isDeposit,
+                        amountIn,
+                        cumulativeAmount,
+                        index2[i],
+                        amountsOutSingleEth[index2[_dec(i)]],
+                        reserves[index2[i]].reserveIn,
+                        reserves[index2[i]].reserveOut,
+                        inv
+                    );
+                }
 
                 // UniV3 adjustment
                 // Expensive in gas, so only used for high values and preferably called off-chain
-                if (index2[i] < 5 && index2[i] > 1 && amountsIn[index2[i]] > uniV3Caps[index2[i]] / 2) {
+                if (index2[i] < 5 && index2[i] > 1 && amountsIn[index2[i]] > uniV3Caps[index2[i] - 2] / 2) {
                     // address tokenIn = isDeposit ? address(WETH09) : address(MEVETH);
                     // address tokenOut = isDeposit ? address(MEVETH) : address(WETH09);
                     amountsOut[index2[i]] = _swapUniV3Call(
-                        !isDeposit,
+                        isDeposit,
                         uint24(MevEthLibrary.getFee(index2[i])),
                         isDeposit ? address(WETH09) : address(MEVETH),
                         isDeposit ? address(MEVETH) : address(WETH09),
@@ -575,6 +568,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
 
                 cumulativeAmount = cumulativeAmount + amountsIn[index2[i]];
                 if (cumulativeAmount == amountIn) break;
+                if (_isZero(amountsOutSingleEth[index2[_dec(i)]])) break;
             }
         }
     }
@@ -612,10 +606,6 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
             if (amount + 0.1 ether > amountIn - cumulativeAmount) {
                 amount = amountIn - cumulativeAmount;
                 endLoop = true;
-            }
-            if (amount == 0) {
-                amountOut = 0;
-                return (amountInToSync, amountOut);
             }
 
             {
@@ -750,6 +740,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
             sqrtPriceLimitX96: isReverse ? MAX_SQRT_RATIO - 1 : MIN_SQRT_RATIO + 1
         });
         // bytes memory input = abi.encodeWithSelector(quoter.quoteExactInputSingle.selector, quoterParams);
+        // (bool success, bytes memory data) = address(quoter).staticcall(input);
         (bool success, bytes memory data) = address(quoter).staticcall(abi.encodeWithSelector(quoter.quoteExactInputSingle.selector, quoterParams));
         if (!success) {
             amountOut = 0;
@@ -785,7 +776,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
             amountIn = swaps.pools[j].amountIn;
             if (_isNonZero(amountIn)) {
                 (, uint256 amountOut) =
-                    _swapUniV3(!swaps.isDeposit, uint24(MevEthLibrary.getFee(j)), to, swaps.tokenIn, swaps.tokenOut, swaps.pools[j].pair, amountIn); // single v3
+                    _swapUniV3(swaps.isDeposit, uint24(MevEthLibrary.getFee(j)), to, swaps.tokenIn, swaps.tokenOut, swaps.pools[j].pair, amountIn); // single v3
                     // swap
                 amounts[1] = amounts[1] + amountOut;
                 if (amountOut == 0) {
@@ -841,8 +832,6 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
                 if (useQueue) {
                     MEVETH.withdrawQueue(MEVETH.previewRedeem(amountIn) - 1, to, address(this));
                     amounts[1] = amounts[1] + MEVETH.previewRedeem(amountIn);
-                } else {
-                    amounts[1] = amounts[1] + MEVETH.redeem(amountIn, to, address(this));
                 }
             }
         }

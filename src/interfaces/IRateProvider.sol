@@ -9,7 +9,6 @@
  * @custom.org.encryption="manifoldfinance.com/.well-known/pgp-key.asc"
  * @custom:org.preferred-languages="en"
  */
-
 pragma solidity ^0.8.19;
 
 /// @title IRateProvider

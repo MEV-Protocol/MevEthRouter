@@ -20,7 +20,7 @@ stackAllocation = true
 mainnet = { key = "${ETHERSCAN_API}" }
 
 [rpc_endpoints]
-mainnet = ""
+mainnet = "${RPC_MAINNET}"
 optimism = ""
 arbitrum = ""
 polygon = ""
