@@ -442,6 +442,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         view
         returns (uint256 amountOut)
     {
+
         uint256[] memory balances = new uint256[](2);
         balances[0] = isDeposit ? reserveOut : reserveIn;
         balances[1] = isDeposit ? reserveIn : reserveOut;
@@ -450,6 +451,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
 
         // same selector workaround here
         (, bytes memory returnData) = address(gyroMath).staticcall(abi.encodeWithSelector(0x61ff4236, balances, amountIn, !isDeposit, params, derived, inv));
+
         amountOut = abi.decode(returnData, (uint256)) * 1 ether / _scalingFactor(isDeposit);
     }
 
@@ -538,6 +540,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
                         reserves[index2[i]].reserveOut,
                         inv
                     );
+
                 }
 
                 cumulativeAmount = cumulativeAmount + amountsIn[index2[i]];
@@ -680,6 +683,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
         virtual
         returns (uint256 amountInActual, uint256 amountOut)
     {
+
         try IUniswapV3Pool(pair).swap(
             to, !isReverse, int256(amountIn), isReverse ? MAX_SQRT_RATIO - 1 : MIN_SQRT_RATIO + 1, abi.encodePacked(tokenIn, tokenOut, fee)
         ) returns (int256 amount0, int256 amount1) {
@@ -689,6 +693,7 @@ contract MevEthRouter is IUniswapV3SwapCallback, IMevEthRouter {
             amountOut = 0;
         }
     }
+
 
     /// @dev Internal core swap. Requires the initial amount to have already been sent to the first pair (for v2 pairs).
     /// @param useQueue Use queue or not for withdrawals
