@@ -2,6 +2,8 @@
 
 ### Optimal route for mevETH Deposit / Swap / Withdraw
 
+[Contract Docs](docs/src/SUMMARY.md)
+
 Pools
 - Curve
 - Balancer
